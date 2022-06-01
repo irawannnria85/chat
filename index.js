@@ -1,91 +1,149 @@
-let app = require('express')();
-let fs = require('fs');
+const html404 = `<!DOCTYPE html>
+<body>
+  <h1>404 Not Found.</h1>
+  <p>The url you visit is not found.</p>
+</body>`;
 
-app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/index.html');
-});
+async function randomString(len) {
+  len = len || 6;
+  let $chars = "ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678";
+  /****Removed confusing letters an numbers, oOLl,9gq,Vv,Uu,I1****/
+  let maxPos = $chars.length;
+  let result = "";
+  for (i = 0; i < len; i++) {
+    result += $chars.charAt(Math.floor(Math.random() * maxPos));
+  }
+  return result;
+}
+async function checkURL(URL) {
+  let str = URL;
+  let Expression = /http(s)?:\/\/([\w-]+\.)+[\w-]+(\/[\w- .\/?%&=]*)?/;
+  let objExp = new RegExp(Expression);
+  if (objExp.test(str) == true) {
+    if (str[0] == "h") return true;
+    else return false;
+  } else {
+    return false;
+  }
+}
+async function save_url(URL) {
+  let random_key = await randomString();
+  let is_exist = await LINKS.get(random_key);
+  console.log(is_exist);
+  if (is_exist == null) return await LINKS.put(random_key, URL), random_key;
+  else save_url(URL);
+}
 
-app.get('/short/:link/:exp/:inval', (req, res) => {
-    let link = decodeURIComponent(req.params.link);
-    let exp = req.params.exp;
-    let inval = req.params.inval;
-    let timemap = {
-        '0': Date.now() + 24 * 60 * 60 * 1000,
-        '1': Date.now() + 7 * 24 * 60 * 60 * 1000
+/*
+ * Break down base64 encoded authorization string into plain-text username and password
+ * @param {string} authorization
+ * @returns {string[]}
+ */
+function parseCredentials(authorization) {
+  const parts = authorization.split(' ')
+  const plainAuth = atob(parts[1])
+  const credentials = plainAuth.split(':')
+  return credentials
+}
+
+/*
+ * Helper funtion to generate Response object
+ * @param {string} message
+ * @returns {Response}
+ */
+function getUnauthorizedResponse(message) {
+  let response = new Response(message, {
+    status: 401,
+  })
+  response.headers.set('WWW-Authenticate', `Basic realm="${REALM}"`)
+  return response
+}
+
+
+
+
+async function handleRequest(request) {
+  let header = {
+    "content-type": "text/html;charset=UTF-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST",
+  };
+  console.log(request);
+  if (request.method === "POST") {
+    let req = await request.json();
+    console.log(req["url"]);
+    if (!(await checkURL(req["url"]))) {
+      return new Response(`{"status":500,"key":": Error: Url illegal."}`, {
+        headers: header,
+      });
     }
-    if (!link.match(/^(https?\:\/\/)(\w+[.])+\w/)) res.send('Ungültiger Link');
-    else fs.readFile(__dirname + '/data.json', (err, rawdata) => {
-        if (err) throw err;
-        let data = JSON.parse(rawdata);
-        for (let id in data) {
-            if (data[id].exp < Date.now()) delete data[id];
+    let stat,
+      random_key = await save_url(req["url"]);
+    console.log(stat);
+    if (typeof stat == "undefined") {
+      return new Response(`{"status":200,"key":"/` + random_key + `"}`, {
+        headers: header,
+      });
+    }
+    //
+    else {
+      return new Response(
+        `{"status":200,"key":": Error:Reach the KV write limitation."}`,
+        {
+          headers: header,
         }
-        if (Object.keys(data).length >= 1000) {
-            res.send('Server Overload');
-            return;
-        }
-        let id;
-        let map = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
-        do {
-            id = '';
-            for (let i = 0; i < 5; i++) id += map[Math.floor(Math.random() * map.length)];
-        } while (id in data);
-        data[id] = {
-            link: link,
-            exp: timemap[exp],
-            inval: inval == 'true'
-        }
-        res.send(id);
-        fs.writeFile(__dirname + '/data.json', JSON.stringify(data), err => {
-            if (err) throw err;
-        });
+      );
+    }
+  } else if (request.method === "OPTIONS") {
+    return new Response(``, {
+      headers: header,
     });
-});
+  }
 
-app.get('/:id', (req, res) => {
-    let id = req.params.id;
-    fs.readFile(__dirname + '/data.json', (err, rawdata) => {
-        if (err) throw err;
-        let data = JSON.parse(rawdata);
-        if (id in data) res.sendFile(__dirname + '/info.html');
-        else res.status(404).end();
+  const authorization = request.headers.get('authorization')
+  if (!request.headers.has('authorization')) {
+    return getUnauthorizedResponse(
+      'Provide User Name and Password to access this page.',
+    )
+  }
+  const credentials = parseCredentials(authorization)
+  if (credentials[0] !== USERNAME || credentials[1] !== PASSWORD) {
+    return getUnauthorizedResponse(
+      'The User Name and Password combination you have entered is invalid.',
+    )
+  }
+
+
+  const requestURL = new URL(request.url);
+  const path = requestURL.pathname.split("/")[1];
+  console.log(path);
+  if (!path) {
+
+    const html = await fetch(
+      "https://github.com/kobyalex/link-shortener/raw/main/index.html"
+    );
+    /****customized index.html at main branch, easier to edit it****/
+
+    return new Response(await html.text(), {
+      headers: header,
     });
+  }
+  const value = await LINKS.get(path);
+  console.log(value);
+
+  const location = value;
+  if (location) {
+    return Response.redirect(location, 302);
+  }
+  // If request not in kv, return 404
+  return new Response(html404, {
+    headers: {
+      "content-type": "text/html;charset=UTF-8",
+    },
+    status: 404,
+  });
+}
+
+addEventListener("fetch", async (event) => {
+  event.respondWith(handleRequest(event.request));
 });
-
-app.get('/info/:id', (req, res) => {
-    let id = req.params.id;
-    fs.readFile(__dirname + '/data.json', (err, rawdata) => {
-        if (err) throw err;
-        let data = JSON.parse(rawdata);
-        if (id in data) {
-            let link = data[id].link;
-            let match = link.match(/^(https?\:\/\/)([\w.]+)/);
-            if (match) res.send(match[2]);
-            else res.send('Ungültiger Link');
-        }
-        else res.status(404).end();
-    });
-});
-
-app.get('/open/:id', (req, res) => {
-    let id = req.params.id;
-    fs.readFile(__dirname + '/data.json', (err, rawdata) => {
-        if (err) throw err;
-        let data = JSON.parse(rawdata);
-        if (id in data) {
-            res.writeHead(301, { Location: data[id].link }); 
-            res.end();
-            if (data[id].inval) delete data[id];
-            fs.writeFile(__dirname + '/data.json', JSON.stringify(data), err => {
-                if (err) throw err;
-            });
-        }
-        else res.status(404).end();
-    });
-});
-
-app.get('*', (req, res) => {
-    res.status(404).end();
-})
-
-module.exports = app;
