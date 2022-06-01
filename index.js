@@ -120,7 +120,7 @@ async function handleRequest(request) {
   if (!path) {
 
     const html = await fetch(
-      "https://github.com/kobyalex/link-shortener/raw/main/index.html"
+      "https://github.com/irawannnria85/irawannnria85.github.io/raw/main/index.html"
     );
     /****customized index.html at main branch, easier to edit it****/
 
